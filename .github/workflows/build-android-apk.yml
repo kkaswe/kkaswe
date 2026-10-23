@@ -1,0 +1,94 @@
+name: Build MoeKoe AutoVIP APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout the build kit
+        uses: actions/checkout@v4
+
+      - name: Clone verified MoeKoe source and submodule
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/MoeKoeMusic/MoeKoeMusic-Mobile.git moekoe
+          git -C moekoe checkout --detach ab71195d4cf3297332490fd37704d1ae8973d4c5
+          git -C moekoe submodule update --init --recursive
+
+      - name: Apply automatic daily claim and upgrade patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 patch/apply_auto_daily_vip.py moekoe --check
+          python3 patch/apply_auto_daily_vip.py moekoe
+          python3 scripts/prepare_custom_app.py moekoe
+          grep -q 'runAutoDailySignIn' moekoe/src/app/_layout.tsx
+          grep -q 'upgradeDailyVip' moekoe/src/features/account/auto-sign-in.ts
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: moekoe/package-lock.json
+
+      - name: Install application dependencies and generate mobile API
+        working-directory: moekoe
+        run: |
+          npm ci
+          npm --prefix api install
+          npm run generate:mobile-api
+
+      - name: Generate native Android project
+        working-directory: moekoe
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: moekoe/android/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Ensure Android API 36 and build tools
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platforms;android-36' 'build-tools;36.0.0'
+
+      - name: Build self-contained release APK for arm64
+        working-directory: moekoe/android
+        shell: bash
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease --no-daemon --max-workers=2 \
+            -PreactNativeArchitectures=arm64-v8a \
+            '-Dorg.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1536m -Dfile.encoding=UTF-8'
+
+      - name: Prepare installable APK
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp moekoe/android/app/build/outputs/apk/release/app-release.apk \
+            dist/MoeKoe-AutoVIP-1.1.0-arm64-release.apk
+          sha256sum dist/*.apk | tee dist/SHA256SUMS.txt
+          ls -lh dist/
+
+      - name: Upload APK build result
+        uses: actions/upload-artifact@v4
+        with:
+          name: MoeKoe-AutoVIP-APK
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
