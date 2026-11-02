@@ -5,6 +5,8 @@ on:
     paths:
       - source-payload.b64
       - .github/workflows/build-ziwei-apk.yml
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
@@ -13,8 +15,17 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Extract project
-        run: mkdir -p build-project && base64 --decode source-payload.b64 | tar -xJf - -C build-project
+      - name: Validate and extract project
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s source-payload.b64
+          mkdir -p build-project
+          base64 --decode source-payload.b64 > /tmp/ziwei-source.tar.xz
+          xz --test /tmp/ziwei-source.tar.xz
+          tar -xJf /tmp/ziwei-source.tar.xz -C build-project
+          test -f build-project/package.json
+          test -f build-project/android/app/build.gradle
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -38,7 +49,7 @@ jobs:
         run: npm run build:web && npm run stage:android
       - name: Compile APK
         working-directory: build-project
-        run: gradle -p android --no-daemon assembleDebug
+        run: gradle -p android --no-daemon --stacktrace assembleDebug
       - uses: actions/upload-artifact@v4
         with:
           name: ZiweiDeepSeek-debug-apk
