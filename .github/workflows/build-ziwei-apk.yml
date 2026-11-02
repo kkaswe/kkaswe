@@ -9,7 +9,7 @@ on:
     branches: [main]
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 jobs:
   android-apk:
     runs-on: ubuntu-24.04
@@ -65,3 +65,17 @@ jobs:
           name: ZiweiDeepSeek-debug-apk
           path: build-project/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+      - name: Publish direct APK on build branch
+        if: github.event_name == 'push' && github.ref == 'refs/heads/ziwei-deepseek-android-build'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p releases
+          cp build-project/android/app/build/outputs/apk/debug/app-debug.apk releases/ZiweiDeepSeek-debug.apk
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add releases/ZiweiDeepSeek-debug.apk
+          if ! git diff --cached --quiet; then
+            git commit -m "build: publish directly downloadable Android APK [skip ci]"
+            git push origin HEAD:ziwei-deepseek-android-build
+          fi
