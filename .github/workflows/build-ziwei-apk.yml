@@ -3,7 +3,7 @@ on:
   push:
     branches: [ziwei-deepseek-android-build]
     paths:
-      - source-payload.tar.xz
+      - source-payload.b64
       - .github/workflows/build-ziwei-apk.yml
   workflow_dispatch:
 permissions:
@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Extract project
-        run: mkdir -p build-project && tar -xJf source-payload.tar.xz -C build-project
+        run: mkdir -p build-project && base64 --decode source-payload.b64 | tar -xJf - -C build-project
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
