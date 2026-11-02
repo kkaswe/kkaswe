@@ -1,0 +1,81 @@
+name: Build Ziwei DeepSeek Android APK
+on:
+  push:
+    branches: [ziwei-deepseek-android-build]
+    paths:
+      - source-payload.b64
+      - .github/workflows/build-ziwei-apk.yml
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  android-apk:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate and extract project
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s source-payload.b64
+          mkdir -p build-project
+          base64 --decode source-payload.b64 > /tmp/ziwei-source.tar.xz
+          xz --test /tmp/ziwei-source.tar.xz
+          tar -xJf /tmp/ziwei-source.tar.xz -C build-project
+          test -f build-project/package.json
+          test -f build-project/android/app/build.gradle
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK components from runner SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          echo "SDK root: $SDK_ROOT"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
+          test -n "$SDKMANAGER"
+          "$SDKMANAGER" --install 'platforms;android-35' 'build-tools;35.0.0' 'platform-tools'
+          "$SDKMANAGER" --list_installed | grep -E 'platforms;android-35|build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Install npm dependencies
+        working-directory: build-project
+        run: npm install --no-audit --no-fund
+      - name: Synchronize verified upstream engine
+        working-directory: build-project
+        run: npm run sync:upstream
+      - name: Build local web and Android assets
+        working-directory: build-project
+        run: npm run build:web && npm run stage:android
+      - name: Compile APK
+        working-directory: build-project
+        run: gradle -p android --no-daemon --stacktrace assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ZiweiDeepSeek-debug-apk
+          path: build-project/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+      - name: Publish direct APK on build branch
+        if: github.event_name == 'push' && github.ref == 'refs/heads/ziwei-deepseek-android-build'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p releases
+          cp build-project/android/app/build/outputs/apk/debug/app-debug.apk releases/ZiweiDeepSeek-debug.apk
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add releases/ZiweiDeepSeek-debug.apk
+          if ! git diff --cached --quiet; then
+            git commit -m "build: publish directly downloadable Android APK [skip ci]"
+            git push origin HEAD:ziwei-deepseek-android-build
+          fi
